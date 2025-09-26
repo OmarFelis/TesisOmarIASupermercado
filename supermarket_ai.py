@@ -16,7 +16,7 @@ class SupermarketAI:
         # Cargar logo de la universidad
         self.logo = self.cargar_logo()
 
-        # Productos de supermercado con precios en soles peruanos
+        # Productos de supermercado con precios en soles
         self.productos_supermercado = {
             # Frutas y verduras
             'banana': 3.50, 'apple': 5.00, 'orange': 4.50, 'broccoli': 8.00, 'carrot': 2.50,
