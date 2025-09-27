@@ -10,8 +10,8 @@ class SupermarketAI:
         self.cap.set(3, 1280)
         self.cap.set(4, 720)
 
-        # Modelo YOLO para detección de productos
-        self.model = YOLO('yolov8n.pt')
+        # Modelo YOLO más potente para mejor detección
+        self.model = YOLO('yolov8m.pt')  # Medium model (mejor que nano)
         
         # Cargar logo de la universidad
         self.logo = self.cargar_logo()
@@ -106,6 +106,29 @@ class SupermarketAI:
     def calcular_total(self):
         self.total = sum(item['precio'] * item['cantidad'] for item in self.carrito)
 
+    def dibujar_area_deteccion(self, frame):
+        # Definir área de detección (centro de la pantalla)
+        h, w = frame.shape[:2]
+        x1, y1 = int(w * 0.25), int(h * 0.25)  # 25% desde arriba-izquierda
+        x2, y2 = int(w * 0.75), int(h * 0.75)  # 75% hasta abajo-derecha
+        
+        # Dibujar rectángulo de área de detección
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 3)  # Amarillo
+        
+        # Texto instructivo
+        cv2.putText(frame, "AREA DE DETECCION", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        cv2.putText(frame, "Coloca el producto aqui", (x1, y2+25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        return frame, (x1, y1, x2, y2)
+    
+    def esta_en_area_deteccion(self, x1, y1, x2, y2, area_deteccion):
+        # Verificar si el objeto está dentro del área de detección
+        ax1, ay1, ax2, ay2 = area_deteccion
+        centro_x = (x1 + x2) // 2
+        centro_y = (y1 + y2) // 2
+        
+        return ax1 <= centro_x <= ax2 and ay1 <= centro_y <= ay2
+
     def mostrar_carrito(self, frame):
         y_pos = 50
         cv2.putText(frame, "CARRITO DE COMPRAS", (900, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
@@ -123,9 +146,16 @@ class SupermarketAI:
         cv2.putText(frame, "Presiona C para limpiar carrito", (10, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.putText(frame, "Presiona ESC para salir", (10, frame.shape[0] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-    def detectar_productos(self, frame):
-        resultados = self.model(frame, stream=True, verbose=False)
+    def detectar_productos(self, frame, area_deteccion):
+        # Configuración optimizada para mejor detección
+        resultados = self.model(frame, 
+                               stream=True, 
+                               verbose=False,
+                               conf=0.3,      # Confianza mínima
+                               iou=0.5,       # Supresión no máxima
+                               max_det=10)    # Máximo 10 detecciones
         productos_detectados = []
+        productos_en_area = []
 
         for resultado in resultados:
             if resultado.boxes is not None:
@@ -138,17 +168,28 @@ class SupermarketAI:
                     nombre_producto = self.model.names[clase_id]
                     
                     # Solo mostrar productos que están en nuestro supermercado
-                    if nombre_producto in self.productos_supermercado and confianza > 0.5:
+                    if nombre_producto in self.productos_supermercado and confianza > 0.4:
                         productos_detectados.append(nombre_producto)
                         
-                        # Dibujar detección
-                        frame = self.dibujar_rectangulo(frame, (0, 255, 0), x1, y1, x2, y2)
+                        # Verificar si está en el área de detección
+                        en_area = self.esta_en_area_deteccion(x1, y1, x2, y2, area_deteccion)
+                        
+                        if en_area:
+                            productos_en_area.append(nombre_producto)
+                            # Color verde para productos en área
+                            color = (0, 255, 0)
+                            frame = self.dibujar_rectangulo(frame, color, x1, y1, x2, y2)
+                        else:
+                            # Color gris para productos fuera del área
+                            color = (128, 128, 128)
+                            frame = self.dibujar_rectangulo(frame, color, x1, y1, x2, y2)
                         
                         precio = self.productos_supermercado[nombre_producto]
-                        texto = f"{nombre_producto}: S/{precio:.2f} ({int(confianza*100)}%)"
-                        frame = self.dibujar_texto(frame, texto, x1, y1, (0, 255, 0))
+                        estado = "EN AREA" if en_area else "FUERA"
+                        texto = f"{nombre_producto}: S/{precio:.2f} ({int(confianza*100)}%) {estado}"
+                        frame = self.dibujar_texto(frame, texto, x1, y1, color)
 
-        return frame, productos_detectados
+        return frame, productos_en_area
 
     def ejecutar(self):
         print("Supermercado AI iniciado!")
@@ -176,12 +217,15 @@ class SupermarketAI:
             if not ret:
                 break
 
-            # Detectar productos
-            frame, productos_detectados = self.detectar_productos(frame)
+            # Dibujar área de detección
+            frame, area_deteccion = self.dibujar_area_deteccion(frame)
             
-            # Guardar último producto para agregar al carrito
-            if productos_detectados:
-                ultimo_producto_detectado = productos_detectados[0]
+            # Detectar productos
+            frame, productos_en_area = self.detectar_productos(frame, area_deteccion)
+            
+            # Guardar último producto EN ÁREA para agregar al carrito
+            if productos_en_area:
+                ultimo_producto_detectado = productos_en_area[0]
 
             # Mostrar logo y carrito
             frame = self.mostrar_logo(frame)
